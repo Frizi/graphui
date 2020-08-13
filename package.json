@@ -40,7 +40,12 @@
       "project": "./tsconfig.json"
     },
     "rules": {
-      "no-unused-vars": [1, { "argsIgnorePattern": "^_" }],
+      "no-unused-vars": [
+        1,
+        {
+          "argsIgnorePattern": "^_"
+        }
+      ],
       "no-debugger": 0
     }
   },
