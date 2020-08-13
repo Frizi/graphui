@@ -6,8 +6,18 @@
       :width="size.w"
       :height="size.h"
     >
-      <circle cx="0" cy="0" r="12" />
-
+      <path
+        :d="bgLines.fine"
+        :stroke-width="transform.scale * 1"
+        fill="none"
+        stroke="#eeeeee"
+      />
+      <path
+        :d="bgLines.coarse"
+        :stroke-width="transform.scale * 3"
+        fill="none"
+        stroke="#eeeeee"
+      />
       <!-- <circle
         v-for="(dot, i) in dots"
         :key="i"
@@ -15,7 +25,7 @@
         :cy="dot.y"
         fill="blue"
         r="7"
-      /> -->
+      />-->
       <path :d="linksPath" stroke="black" fill="none" stroke-width="1" />
     </svg>
     <div class="origin" :style="originStyle">
@@ -33,7 +43,7 @@
 
 <script lang="ts">
 import { defineComponent, reactive, computed, onMounted, ref } from "vue";
-import { nextId, isDefined } from "../util";
+import { nextId, isDefined, normalizedDeltaY, clamp } from "../util";
 import {
   Transform,
   VisualGraph,
@@ -87,11 +97,51 @@ export default defineComponent({
     let root = ref(null);
     let dots = reactive({} as { [k: number]: Vec2 });
 
-    const viewBox = computed(() => {
+    const svgSpace = computed(() => {
       let w = transform.scale * size.w;
       let h = transform.scale * size.h;
       let x = (transform.translateX - size.w / 2) * transform.scale;
       let y = (transform.translateY - size.h / 2) * transform.scale;
+      return { w, h, x, y };
+    });
+
+    const bgLines = computed(() => {
+      let log = Math.log10(transform.scale);
+      let distance = Math.pow(10, Math.floor(log) + 2) * 2;
+      let coarseDistance = distance * 5;
+      console.log(distance);
+      let { x, y, w, h } = svgSpace.value;
+      let fw = (Math.ceil(w / distance) + 1) * distance;
+      let fh = (Math.ceil(h / distance) + 1) * distance;
+      let fx = Math.floor(x / distance) * distance;
+      let fy = Math.floor(y / distance) * distance;
+      let cw = (Math.ceil(w / coarseDistance) + 1) * coarseDistance;
+      let ch = (Math.ceil(h / coarseDistance) + 1) * coarseDistance;
+      let cx = Math.floor(x / coarseDistance) * coarseDistance;
+      let cy = Math.floor(y / coarseDistance) * coarseDistance;
+
+      let fine = "";
+      let coarse = "";
+      for (let nx = 0; nx < fw; nx += distance) {
+        fine += `M${fx + nx} ${fy}L${fx + nx} ${fy + fh}`;
+      }
+
+      for (let ny = 0; ny < fw; ny += distance) {
+        fine += `M${fx} ${fy + ny}L${fx + fw} ${fy + ny}`;
+      }
+
+      for (let nx = 0; nx < cw; nx += coarseDistance) {
+        coarse += `M${cx + nx} ${cy}L${cx + nx} ${cy + ch}`;
+      }
+
+      for (let ny = 0; ny < cw; ny += coarseDistance) {
+        coarse += `M${cx} ${cy + ny}L${cx + cw} ${cy + ny}`;
+      }
+      return { fine, coarse };
+    });
+
+    const viewBox = computed(() => {
+      const { x, y, w, h } = svgSpace.value;
       return `${x} ${y} ${w} ${h}`;
     });
 
@@ -171,20 +221,23 @@ export default defineComponent({
       size,
       root,
       viewBox,
+      bgLines,
       originStyle,
       linksPath,
       onWheel(e: WheelEvent) {
         let c = { x: e.clientX - size.w / 2, y: e.clientY - size.h / 2 };
         let p = transformPoint(transform, c);
+        console.log(e.deltaMode);
 
-        let delta = e.deltaY > 0 ? 3 : -3;
+        let delta = normalizedDeltaY(e);
 
-        let f = 1 + delta * 0.05;
+        let f = 1 + delta * 0.01;
         let s = transform.scale;
         let ns = s * f;
+        ns = clamp(ns, 0.05, 99.9);
 
-        let dx = (p.x * f - p.x) / ns;
-        let dy = (p.y * f - p.y) / ns;
+        let dx = ((p.x * ns) / s - p.x) / ns;
+        let dy = ((p.y * ns) / s - p.y) / ns;
 
         transform.translateX -= dx;
         transform.translateY -= dy;
