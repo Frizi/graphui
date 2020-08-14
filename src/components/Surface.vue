@@ -1,5 +1,5 @@
 <template>
-  <div class="surface" ref="root" @wheel="onWheel" @mousedown="mouseDown">
+  <div class="surface" ref="root" @wheel="onWheel" @mousedown="pan">
     <svg
       xmlns="http://www.w3.org/2000/svg"
       :viewBox="viewBox"
@@ -33,6 +33,7 @@
         v-for="node in graph.nodes"
         :key="node.id"
         :node="node"
+        :kind="graph.kinds[node.kind]"
         :worldTransform="transform"
         @dots="updateDots"
         @move="node.pos = $event"
@@ -42,43 +43,74 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, reactive, computed, onMounted, ref } from "vue";
-import { nextId, isDefined, normalizedDeltaY, clamp } from "../util";
+import { defineComponent, reactive, computed, onMounted, ref, h } from "vue";
+import {
+  nextId,
+  isDefined,
+  normalizedDeltaY,
+  clamp,
+  dragHandler,
+} from "../util";
 import {
   Transform,
   VisualGraph,
   ComputedLinks,
   Vec2,
   transformPoint,
+  DotKind,
 } from "../graph";
 import VisualNode from "./VisualNode.vue";
-interface TestProp {
-  bla: Promise<number>;
-}
 
-function getGraph(): VisualGraph {
-  let i1 = nextId();
-  let i2 = nextId();
-  return {
-    nodes: [
-      {
-        id: nextId(),
-        name: "Node 1",
-        pos: { x: -100, y: 10 },
-        inputs: [{ id: nextId(), color: "#123123", label: "test" }],
-        outputs: [{ id: i1, color: "#123123", label: "result" }],
+const graph: VisualGraph = {
+  kinds: [
+    {
+      id: 0,
+      inputs: [{ id: 0, kind: DotKind.ANY, label: "test" }],
+      outputs: [
+        {
+          id: 0,
+          label: "result",
+          run(ctx) {
+            let input = ctx.getInput(0);
+            if (input != null) {
+              switch (input.kind) {
+                case DotKind.NUMBER:
+                  return { kind: input.kind, value: input.value };
+                case DotKind.COLOR:
+                  return { kind: input.kind, value: input.value };
+                case DotKind.IMAGE:
+                  return { kind: input.kind, value: input.value };
+              }
+            }
+            return null;
+          },
+        },
+      ],
+      preview(ctx) {
+        return h("div", ["hello"]);
       },
-      {
-        id: nextId(),
-        name: "Node 2",
-        pos: { x: 50, y: -30 },
-        inputs: [{ id: i2, color: "#123123", label: "test" }],
-        outputs: [{ id: nextId(), color: "#123123", label: "result" }],
-      },
-    ],
-    links: [{ start: i1, end: i2 }],
-  };
-}
+    },
+  ],
+  nodes: [
+    {
+      id: 0,
+      kind: 0,
+      name: "Node 1",
+      pos: { x: -100, y: 10 },
+      minWidth: null,
+      state: null,
+    },
+    {
+      id: 1,
+      kind: 0,
+      name: "Node 2",
+      pos: { x: 50, y: -30 },
+      minWidth: null,
+      state: null,
+    },
+  ],
+  links: [{ startNode: 0, startOutput: 0, endNode: 1, endInput: 0 }],
+};
 
 export default defineComponent({
   name: "Surface",
@@ -95,7 +127,7 @@ export default defineComponent({
     let size = reactive({ w: 0, h: 0 });
 
     let root = ref(null);
-    let dots = reactive({} as { [k: number]: Vec2 });
+    let dots = reactive({} as { [k: string]: Vec2 });
 
     const svgSpace = computed(() => {
       let w = transform.scale * size.w;
@@ -154,8 +186,6 @@ export default defineComponent({
       };
     });
 
-    let graph: VisualGraph = reactive(getGraph());
-
     onMounted(() => {
       let e = root.value! as Element;
       // todo: remove this hack once ResizeObserver decl ships
@@ -176,8 +206,10 @@ export default defineComponent({
       (): ComputedLinks => {
         return graph.links
           .map((l) => {
-            let start = dots[l.start];
-            let end = dots[l.end];
+            let startKey = `${l.startNode}.o${l.startOutput}`;
+            let endKey = `${l.endNode}.i${l.endInput}`;
+            let start = dots[startKey];
+            let end = dots[endKey];
             if (start != null && end != null) {
               return { start, end };
             }
@@ -211,8 +243,6 @@ export default defineComponent({
       return path;
     });
 
-    let drag: Vec2 | null = null;
-
     return {
       graph,
       transform,
@@ -243,34 +273,11 @@ export default defineComponent({
         transform.translateY -= dy;
         transform.scale = ns;
       },
-      mouseDown(e: MouseEvent) {
-        drag = { x: e.clientX, y: e.clientY };
-
-        function move(e: MouseEvent) {
-          if (drag != null) {
-            let deltaX = drag.x - e.clientX;
-            let deltaY = drag.y - e.clientY;
-
-            transform.translateX += deltaX;
-            transform.translateY += deltaY;
-
-            drag = { x: e.clientX, y: e.clientY };
-          }
-        }
-
-        function drop() {
-          drag = null;
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", drop);
-        }
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", drop);
-      },
-      mouseUp(_e: MouseEvent) {
-        drag = null;
-      },
-
-      updateDots(newDots: Vec2[]) {
+      pan: dragHandler(({ x, y }) => {
+        transform.translateX += x;
+        transform.translateY += y;
+      }),
+      updateDots(newDots: { [k: string]: Vec2 }) {
         Object.assign(dots, newDots);
       },
     };

@@ -1,4 +1,5 @@
 import { PropType } from "vue";
+import { Vec2 } from "./graph";
 
 let idCounter = 0;
 export function nextId(): number {
@@ -47,4 +48,29 @@ function getScrollLineHeight() {
 
 export function clamp(t: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, t));
+}
+
+export function dragHandler(onDrag: (delta: Vec2) => void) {
+  let drag: Vec2 | null = null;
+  return function down(e: MouseEvent) {
+    drag = { x: e.clientX, y: e.clientY };
+    e.stopPropagation();
+
+    function move(e: MouseEvent) {
+      if (drag != null) {
+        const deltaX = drag.x - e.clientX;
+        const deltaY = drag.y - e.clientY;
+        drag = { x: e.clientX, y: e.clientY };
+        onDrag({ x: deltaX, y: deltaY });
+      }
+    }
+
+    function drop() {
+      drag = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", drop);
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", drop);
+  };
 }

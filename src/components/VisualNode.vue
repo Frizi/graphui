@@ -6,27 +6,26 @@
     <div
       layout="row u1"
       class="input"
-      v-for="input in node.inputs"
+      v-for="input in kind.inputs"
       :key="input.id"
     >
       <div
-        class="dot"
-        :style="{ backgroundColor: input.color }"
-        :ref="(e) => (dots[input.id] = e)"
+        :class="`dot kind-${input.kind}`"
+        :ref="(e) => (dots[`${node.id}.i${input.id}`] = e)"
       ></div>
       <div class="label" flex>{{ input.label }}</div>
     </div>
     <div
       layout="row u1"
       class="output"
-      v-for="output in node.outputs"
+      v-for="output in kind.outputs"
       :key="output.id"
     >
       <div class="label" flex>{{ output.label }}</div>
       <div
         class="dot"
         :style="{ backgroundColor: output.color }"
-        :ref="(e) => (dots[output.id] = e)"
+        :ref="(e) => (dots[`${node.id}.o${output.id}`] = e)"
       ></div>
     </div>
   </div>
@@ -34,13 +33,14 @@
 
 <script lang="ts">
 import { defineComponent, computed, watch, ref } from "vue";
-import { GraphNode, Vec2, Transform } from "../graph";
-import { reqobj } from "../util";
+import { GraphNode, Vec2, Transform, NodeKind } from "../graph";
+import { reqobj, dragHandler } from "../util";
 
 export default defineComponent({
   name: "VisualNode",
   props: {
     worldTransform: reqobj<Transform>(),
+    kind: reqobj<NodeKind>(),
     node: reqobj<GraphNode>(),
   },
   setup(props, { emit }) {
@@ -79,36 +79,14 @@ export default defineComponent({
       emit("dots", pos);
     });
 
-    let drag: Vec2 | null = null;
-
     return {
       dots,
       rootStyle,
-      drag(e: MouseEvent) {
-        drag = { x: e.clientX, y: e.clientY };
-        e.stopPropagation();
-
-        function move(e: MouseEvent) {
-          if (drag != null) {
-            let deltaX = drag.x - e.clientX;
-            let deltaY = drag.y - e.clientY;
-
-            let x = props.node.pos.x - deltaX * props.worldTransform.scale;
-            let y = props.node.pos.y - deltaY * props.worldTransform.scale;
-            emit("move", { x, y });
-
-            drag = { x: e.clientX, y: e.clientY };
-          }
-        }
-
-        function drop() {
-          drag = null;
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", drop);
-        }
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", drop);
-      },
+      drag: dragHandler(({ x: deltaX, y: deltaY }) => {
+        let x = props.node.pos.x - deltaX * props.worldTransform.scale;
+        let y = props.node.pos.y - deltaY * props.worldTransform.scale;
+        emit("move", { x, y });
+      }),
     };
   },
 });
@@ -150,6 +128,7 @@ export default defineComponent({
   align-self: center;
   border-radius: 5px;
   box-sizing: border-box;
+  background-color: grey;
 }
 
 .input .dot {
@@ -158,5 +137,17 @@ export default defineComponent({
 
 .output .dot {
   margin-right: -10px;
+}
+
+.dot.kind-1 {
+  background-color: red;
+}
+
+.dot.kind-2 {
+  background-color: green;
+}
+
+.dot.kind-4 {
+  background-color: blue;
 }
 </style>
