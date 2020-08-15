@@ -11,7 +11,7 @@
     >
       <div
         :class="`dot kind-${input.kind}`"
-        :ref="(e) => (dots[`${node.id}.i${input.id}`] = e)"
+        :ref="(e) => setDot(input.id, true, e)"
       ></div>
       <div class="label" flex>{{ input.label }}</div>
     </div>
@@ -22,71 +22,109 @@
       :key="output.id"
     >
       <div class="label" flex>{{ output.label }}</div>
-      <div
-        class="dot"
-        :style="{ backgroundColor: output.color }"
-        :ref="(e) => (dots[`${node.id}.o${output.id}`] = e)"
-      ></div>
+      <div class="dot" :ref="(e) => setDot(output.id, false, e)"></div>
+    </div>
+    <div class="preview" v-if="data.preview">
+      <RenderVNode :node="data.preview.value" />
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, computed, watch, ref } from "vue";
-import { GraphNode, Vec2, Transform, NodeKind } from "../graph";
-import { reqobj, dragHandler } from "../util";
+import {
+  defineComponent,
+  computed,
+  watch,
+  ref,
+  onBeforeUpdate,
+  reactive,
+  shallowReactive,
+} from "vue";
+import {
+  GraphNode,
+  Vec2,
+  Transform,
+  NodeKind,
+  encodeDotId,
+  NodeData,
+} from "../graph";
+import RenderVNode from "./RenderVNode.vue";
+import { reqobj, req, dragHandler } from "../util";
 
 export default defineComponent({
   name: "VisualNode",
   props: {
     worldTransform: reqobj<Transform>(),
     kind: reqobj<NodeKind>(),
+    nodeId: req(Number),
     node: reqobj<GraphNode>(),
+    data: reqobj<NodeData>(),
   },
+  components: { RenderVNode },
   setup(props, { emit }) {
-    let dots = ref({} as { [k: number]: HTMLElement });
+    const dots = ref(new Map<number, HTMLElement>());
 
-    let rootStyle = computed(() => {
+    onBeforeUpdate(() => {
+      let map = dots.value;
+      for (let [id, dot] of map) {
+        if (dot.parentNode == null) {
+          map.delete(id);
+        }
+      }
+    });
+
+    const rootStyle = computed(() => {
       return {
         transform: `translate(${props.node.pos.x}px, ${props.node.pos.y}px)`,
       };
     });
 
-    const dotPositions = computed((): { [k: number]: Vec2 } => {
-      let positions: { [k: number]: Vec2 } = {};
-      for (let id of Object.keys(dots.value)) {
-        let dot = dots.value[+id];
-        let top = dot.offsetTop;
-        let left = dot.offsetLeft;
-        positions[+id] = {
-          x: left + dot.offsetWidth / 2,
-          y: top + dot.offsetHeight / 2,
-        };
+    const dotPositions = computed(
+      (): Map<number, Vec2> => {
+        let map = new Map<number, Vec2>();
+        for (let [id, dot] of dots.value) {
+          let top = dot.offsetTop;
+          let left = dot.offsetLeft;
+          map.set(+id, {
+            x: left + dot.offsetWidth / 2,
+            y: top + dot.offsetHeight / 2,
+          });
+        }
+        return map;
       }
-      return positions;
-    });
+    );
 
-    const dotAbsolutePositions = computed((): { [k: number]: Vec2 } => {
-      let abs: { [k: number]: Vec2 } = {};
-      for (let id of Object.keys(dotPositions.value)) {
-        let dot = dotPositions.value[+id];
-        abs[+id] = { x: dot.x + props.node.pos.x, y: dot.y + props.node.pos.y };
+    const dotAbsolutePositions = computed(
+      (): Map<number, Vec2> => {
+        let map = new Map<number, Vec2>();
+        for (let [id, dot] of dotPositions.value) {
+          map.set(id, {
+            x: dot.x + props.node.pos.x,
+            y: dot.y + props.node.pos.y,
+          });
+        }
+        return map;
       }
-      return abs;
-    });
+    );
 
     watch(dotAbsolutePositions, (pos) => {
       emit("dots", pos);
     });
 
     return {
-      dots,
       rootStyle,
       drag: dragHandler(({ x: deltaX, y: deltaY }) => {
-        let x = props.node.pos.x - deltaX * props.worldTransform.scale;
-        let y = props.node.pos.y - deltaY * props.worldTransform.scale;
+        const x = props.node.pos.x - deltaX * props.worldTransform.scale;
+        const y = props.node.pos.y - deltaY * props.worldTransform.scale;
         emit("move", { x, y });
       }),
+      setDot(dot: number, input: boolean, value: HTMLElement) {
+        if (Object.is(input, -0)) {
+          debugger;
+        }
+        const id = encodeDotId(props.nodeId, dot, input);
+        dots.value.set(id, value);
+      },
     };
   },
 });

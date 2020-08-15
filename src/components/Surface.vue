@@ -30,13 +30,15 @@
     </svg>
     <div class="origin" :style="originStyle">
       <VisualNode
-        v-for="node in graph.nodes"
-        :key="node.id"
-        :node="node"
-        :kind="graph.kinds[node.kind]"
+        v-for="entry in graph.nodes"
+        :key="entry[0]"
+        :node="entry[1]"
+        :node-id="entry[0]"
+        :data="evalCtx.nodeData(entry[0])"
+        :kind="graph.kinds[entry[1].kind]"
         :worldTransform="transform"
         @dots="updateDots"
-        @move="node.pos = $event"
+        @move="entry[1].pos = $event"
       />
     </div>
   </div>
@@ -55,9 +57,12 @@ import {
   Transform,
   VisualGraph,
   ComputedLinks,
-  Vec2,
   transformPoint,
   DotKind,
+  encodeDotId,
+  Vec2,
+  EvalContext,
+  link,
 } from "../graph";
 import VisualNode from "./VisualNode.vue";
 
@@ -65,51 +70,100 @@ const graph: VisualGraph = {
   kinds: [
     {
       id: 0,
-      inputs: [{ id: 0, kind: DotKind.ANY, label: "test" }],
+      inputs: [
+        { id: 0, kind: DotKind.ANY, label: "A" },
+        { id: 1, kind: DotKind.ANY, label: "B" },
+      ],
       outputs: [
         {
           id: 0,
           label: "result",
           run(ctx) {
-            let input = ctx.getInput(0);
-            if (input != null) {
-              switch (input.kind) {
-                case DotKind.NUMBER:
-                  return { kind: input.kind, value: input.value };
-                case DotKind.COLOR:
-                  return { kind: input.kind, value: input.value };
-                case DotKind.IMAGE:
-                  return { kind: input.kind, value: input.value };
+            let inputA = ctx.getInput(0);
+            let inputB = ctx.getInput(1);
+            if (inputA != null && inputB != null) {
+              if (
+                inputA.kind == DotKind.NUMBER &&
+                inputB.kind == DotKind.NUMBER
+              ) {
+                return {
+                  kind: DotKind.NUMBER,
+                  value: inputA.value + inputB.value,
+                };
               }
+
+              // todo: other types
+
+              return null;
+            }
+            if (inputA != null) {
+              return inputA;
+            }
+            if (inputB != null) {
+              return inputB;
             }
             return null;
           },
         },
       ],
       preview(ctx) {
-        return h("div", ["hello"]);
+        let out = ctx.getOutput(0)?.value;
+        let str = JSON.stringify(out);
+        return h("div", [str]);
       },
-    },
-  ],
-  nodes: [
-    {
-      id: 0,
-      kind: 0,
-      name: "Node 1",
-      pos: { x: -100, y: 10 },
-      minWidth: null,
-      state: null,
     },
     {
       id: 1,
-      kind: 0,
-      name: "Node 2",
-      pos: { x: 50, y: -30 },
-      minWidth: null,
-      state: null,
+      inputs: [],
+      outputs: [
+        {
+          id: 0,
+          label: "value",
+          run(ctx) {
+            let value = ctx.state() || 0;
+            return { kind: DotKind.NUMBER, value };
+          },
+        },
+      ],
+      preview(ctx) {
+        let value = ctx.state() || 0;
+        return h("input", {
+          type: "number",
+          value,
+          onInput: (e: InputEvent) =>
+            ctx.setState(+(e.target as HTMLInputElement).value),
+        });
+      },
     },
   ],
-  links: [{ startNode: 0, startOutput: 0, endNode: 1, endInput: 0 }],
+  nodes: reactive(
+    new Map(
+      [
+        {
+          kind: 1,
+          name: "Value",
+          pos: { x: -100, y: -50 },
+          minWidth: null,
+          state: null,
+        },
+        {
+          kind: 1,
+          name: "Value",
+          pos: { x: -150, y: 60 },
+          minWidth: null,
+          state: null,
+        },
+        {
+          kind: 0,
+          name: "Sum",
+          pos: { x: 150, y: -30 },
+          minWidth: null,
+          state: null,
+        },
+      ].entries()
+    )
+  ),
+  links: reactive(new Map([link(0, 0, 2, 0), link(1, 0, 2, 1)])),
 };
 
 export default defineComponent({
@@ -127,7 +181,9 @@ export default defineComponent({
     let size = reactive({ w: 0, h: 0 });
 
     let root = ref(null);
-    let dots = reactive({} as { [k: string]: Vec2 });
+    let dots = reactive(new Map<number, Vec2>());
+
+    let evalCtx = new EvalContext(graph);
 
     const svgSpace = computed(() => {
       let w = transform.scale * size.w;
@@ -141,7 +197,6 @@ export default defineComponent({
       let log = Math.log10(transform.scale);
       let distance = Math.pow(10, Math.floor(log) + 2) * 2;
       let coarseDistance = distance * 5;
-      console.log(distance);
       let { x, y, w, h } = svgSpace.value;
       let fw = (Math.ceil(w / distance) + 1) * distance;
       let fh = (Math.ceil(h / distance) + 1) * distance;
@@ -202,44 +257,26 @@ export default defineComponent({
       size.h = rect.height;
     });
 
-    let links = computed(
-      (): ComputedLinks => {
-        return graph.links
-          .map((l) => {
-            let startKey = `${l.startNode}.o${l.startOutput}`;
-            let endKey = `${l.endNode}.i${l.endInput}`;
-            let start = dots[startKey];
-            let end = dots[endKey];
-            if (start != null && end != null) {
-              return { start, end };
-            }
-            return null;
-          })
-          .filter(isDefined);
-      }
-    );
-
     let linksPath = computed(() => {
-      let path = links.value
-        .map((l) => {
-          const x1 = l.start.x;
-          const y1 = l.start.y;
-          const x2 = l.end.x;
-          const y2 = l.end.y;
+      let path = "";
+      for (let [input, output] of graph.links) {
+        let a = dots.get(output);
+        let b = dots.get(input);
+        if (a == null || b == null) {
+          continue;
+        }
+        let delta = b.x - a.x * 0.5;
 
-          let delta = x2 - x1 * 0.5;
+        let offset =
+          delta > 0
+            ? Math.max(50, delta)
+            : Math.min(100 - delta * 0.2, Math.max(50, -delta));
 
-          let offset =
-            delta > 0
-              ? Math.max(50, delta)
-              : Math.min(100 - delta * 0.2, Math.max(50, -delta));
+        const c1 = a.x + offset;
+        const c2 = b.x - offset;
+        path += `M${a.x} ${a.y} C${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
+      }
 
-          const c1 = x1 + offset;
-          const c2 = x2 - offset;
-
-          return `M${x1} ${y1} C${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`;
-        })
-        .join("");
       return path;
     });
 
@@ -247,13 +284,13 @@ export default defineComponent({
       graph,
       transform,
       dots,
-      links,
       size,
       root,
       viewBox,
       bgLines,
       originStyle,
       linksPath,
+      evalCtx,
       onWheel(e: WheelEvent) {
         let c = { x: e.clientX - size.w / 2, y: e.clientY - size.h / 2 };
         let p = transformPoint(transform, c);
@@ -277,8 +314,10 @@ export default defineComponent({
         transform.translateX += x;
         transform.translateY += y;
       }),
-      updateDots(newDots: { [k: string]: Vec2 }) {
-        Object.assign(dots, newDots);
+      updateDots(newDots: Map<number, Vec2>) {
+        for (let [key, val] of newDots) {
+          dots.set(key, val);
+        }
       },
     };
   },

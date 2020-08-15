@@ -31,21 +31,6 @@ export function normalizedDeltaY(e: WheelEvent): number {
   throw new Error("deltaMode missing");
 }
 
-let LINE_HEIGHT: number | null = null;
-function getScrollLineHeight() {
-  if (LINE_HEIGHT != null) {
-    return LINE_HEIGHT;
-  }
-  const el = document.createElement("div");
-  el.style.fontSize = "initial";
-  el.style.display = "none";
-  document.body.appendChild(el);
-  const fontSize = window.getComputedStyle(el).fontSize;
-  document.body.removeChild(el);
-  LINE_HEIGHT = window.parseInt(fontSize);
-  return LINE_HEIGHT;
-}
-
 export function clamp(t: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, t));
 }
