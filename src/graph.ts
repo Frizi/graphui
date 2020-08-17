@@ -1,4 +1,4 @@
-import { VNode, ComputedRef, computed } from "vue";
+import { VNode, ComputedRef } from "vue";
 
 export interface Vec2 {
   x: number;
@@ -14,6 +14,7 @@ export interface GraphNode {
 }
 
 export interface NodeData {
+  inputs: Array<ComputedRef<DotKind>>;
   outputs: Array<ComputedRef<DotValue | null>>;
   preview: ComputedRef<VNode | null>;
 }
@@ -25,21 +26,21 @@ export interface NodeData {
 
 type Rgba = [number, number, number, number];
 
-interface NodeCtx {
+interface NodeCtx<S = any> {
   getInput(input: number): DotValue | null;
-  state(): any | null;
-  setState(value: any): void;
+  state(): S | null;
+  setState(value: S | null): void;
 }
 
-interface PreviewCtx extends NodeCtx {
+export interface PreviewCtx<S = any> extends NodeCtx<S> {
   getOutput(output: number): DotValue | null;
 }
 
-export interface NodeKind {
-  id: number;
+export interface NodeKind<S = any> {
+  name: string;
   inputs: NodeInput[];
-  outputs: NodeOutput[];
-  preview: ((ctx: PreviewCtx) => VNode) | null;
+  outputs: Array<NodeOutput<S>>;
+  preview: ((ctx: PreviewCtx<S>) => VNode) | null;
 }
 
 export interface Transform {
@@ -55,8 +56,18 @@ export function transformPoint(t: Transform, p: Vec2): Vec2 {
   };
 }
 
+export function uiToWorld(
+  size: { w: number; h: number },
+  t: Transform,
+  p: Vec2
+): Vec2 {
+  return transformPoint(t, {
+    x: p.x - size.w / 2,
+    y: p.y - size.h / 2,
+  });
+}
+
 export interface VisualGraph {
-  kinds: NodeKind[];
   nodes: Map<number, GraphNode>;
   links: Map<number, number>;
 }
@@ -81,10 +92,10 @@ export interface NodeInput {
   kind: DotKind;
 }
 
-export interface NodeOutput {
+export interface NodeOutput<S = any> {
   id: number;
   label: string;
-  run(ctx: NodeCtx): DotValue | null;
+  run(ctx: NodeCtx<S>): DotValue | null;
 }
 
 export const enum DotKind {
@@ -94,30 +105,22 @@ export const enum DotKind {
   ANY = 7,
 }
 
-interface DotValueColor {
+export interface DotValueColor {
   kind: DotKind.COLOR;
   value: Rgba;
 }
 
-interface DotValueNumber {
+export interface DotValueNumber {
   kind: DotKind.NUMBER;
   value: number;
 }
 
-interface DotValueImage {
+export interface DotValueImage {
   kind: DotKind.IMAGE;
   value: Uint8Array;
 }
 
-type DotValue = DotValueColor | DotValueNumber | DotValueImage;
-
-interface OutputState {
-  verifiedAt: number;
-  changedAt: number;
-  deps: string[];
-  stateDep: boolean;
-  value: DotValue;
-}
+export type DotValue = DotValueColor | DotValueNumber | DotValueImage;
 
 const INPUT_MASK = 0x40000000;
 
@@ -128,7 +131,7 @@ export function encodeDotId(node: number, dot: number, input: boolean): number {
     throw new Error("dot or node id out of bounds");
   }
 
-  return ((node & 0x3fffffff) << 8) | (dot & 0xff) | (input ? INPUT_MASK : 0);
+  return ((node & 0x3fffff) << 8) | (dot & 0xff) | (input ? INPUT_MASK : 0);
 }
 
 export function link(
@@ -142,71 +145,10 @@ export function link(
 
 export function decodeDotId(encoded: number) {
   const dot = encoded & 0xff;
-  const node = (encoded >> 8) & 0x3fffffff;
+  const node = (encoded >> 8) & 0x3fffff;
   const input = (encoded & INPUT_MASK) == INPUT_MASK;
   return { dot, node, input };
 }
 
-export class EvalContext {
-  graph: VisualGraph;
-  data: Map<GraphNode, NodeData> = new Map();
-  constructor(graph: VisualGraph) {
-    this.graph = graph;
-  }
-
-  outputCache: Map<number, OutputState> = new Map();
-
-  nodeData(nodeId: number): NodeData | null {
-    const node = this.graph.nodes.get(nodeId);
-    if (node == null) {
-      return null;
-    }
-    let data = this.data.get(node);
-    if (data == null) {
-      const kind = this.graph.kinds[node.kind];
-      const ctx = this.getCtx(nodeId);
-      this.data.set(
-        node,
-        (data = {
-          outputs: kind.outputs.map((output) =>
-            computed(() => output.run(ctx))
-          ),
-          preview: computed(() =>
-            kind.preview == null ? null : kind.preview(ctx)
-          ),
-        })
-      );
-    }
-    return data;
-  }
-
-  getOutput(node: number, output: number): DotValue | null {
-    const data = this.nodeData(node);
-    const out = data?.outputs[output]?.value;
-    return out == null ? null : out;
-  }
-
-  getCtx(node: number): PreviewCtx {
-    return {
-      getInput: (input): DotValue | null => {
-        const iid = encodeDotId(node, input, true);
-        const oid = this.graph.links.get(iid);
-        if (oid == null) return null;
-        const decoded = decodeDotId(oid);
-        if (decoded.input == true) {
-          return null;
-        }
-        return this.getOutput(decoded.node, decoded.dot);
-      },
-      state: () => {
-        const state = this.graph.nodes.get(node)!.state;
-        if (state == null) return null;
-        return state;
-      },
-      setState: (value) => {
-        this.graph.nodes.get(node)!.state = value;
-      },
-      getOutput: (output) => this.getOutput(node, output),
-    };
-  }
-}
+(window as any)["encodeDotId"] = encodeDotId;
+(window as any)["decodeDotId"] = decodeDotId;

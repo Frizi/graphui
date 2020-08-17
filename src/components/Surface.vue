@@ -35,10 +35,11 @@
         :node="entry[1]"
         :node-id="entry[0]"
         :data="evalCtx.nodeData(entry[0])"
-        :kind="graph.kinds[entry[1].kind]"
         :worldTransform="transform"
         @dots="updateDots"
         @move="entry[1].pos = $event"
+        @drag-dot="dragDot"
+        @drop-dot="dropDot"
       />
     </div>
   </div>
@@ -52,90 +53,24 @@ import {
   normalizedDeltaY,
   clamp,
   dragHandler,
+  absDragHandler,
 } from "../util";
 import {
   Transform,
   VisualGraph,
   ComputedLinks,
   transformPoint,
+  uiToWorld,
   DotKind,
   encodeDotId,
   Vec2,
-  EvalContext,
   link,
+  decodeDotId,
 } from "../graph";
+import { EvalContext } from "../evalContext";
 import VisualNode from "./VisualNode.vue";
 
 const graph: VisualGraph = {
-  kinds: [
-    {
-      id: 0,
-      inputs: [
-        { id: 0, kind: DotKind.ANY, label: "A" },
-        { id: 1, kind: DotKind.ANY, label: "B" },
-      ],
-      outputs: [
-        {
-          id: 0,
-          label: "result",
-          run(ctx) {
-            let inputA = ctx.getInput(0);
-            let inputB = ctx.getInput(1);
-            if (inputA != null && inputB != null) {
-              if (
-                inputA.kind == DotKind.NUMBER &&
-                inputB.kind == DotKind.NUMBER
-              ) {
-                return {
-                  kind: DotKind.NUMBER,
-                  value: inputA.value + inputB.value,
-                };
-              }
-
-              // todo: other types
-
-              return null;
-            }
-            if (inputA != null) {
-              return inputA;
-            }
-            if (inputB != null) {
-              return inputB;
-            }
-            return null;
-          },
-        },
-      ],
-      preview(ctx) {
-        let out = ctx.getOutput(0)?.value;
-        let str = JSON.stringify(out);
-        return h("div", [str]);
-      },
-    },
-    {
-      id: 1,
-      inputs: [],
-      outputs: [
-        {
-          id: 0,
-          label: "value",
-          run(ctx) {
-            let value = ctx.state() || 0;
-            return { kind: DotKind.NUMBER, value };
-          },
-        },
-      ],
-      preview(ctx) {
-        let value = ctx.state() || 0;
-        return h("input", {
-          type: "number",
-          value,
-          onInput: (e: InputEvent) =>
-            ctx.setState(+(e.target as HTMLInputElement).value),
-        });
-      },
-    },
-  ],
   nodes: reactive(
     new Map(
       [
@@ -259,12 +194,7 @@ export default defineComponent({
 
     let linksPath = computed(() => {
       let path = "";
-      for (let [input, output] of graph.links) {
-        let a = dots.get(output);
-        let b = dots.get(input);
-        if (a == null || b == null) {
-          continue;
-        }
+      function add(a: Vec2, b: Vec2) {
         let delta = b.x - a.x * 0.5;
 
         let offset =
@@ -277,8 +207,38 @@ export default defineComponent({
         path += `M${a.x} ${a.y} C${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
       }
 
+      for (let [input, output] of graph.links) {
+        let a = dots.get(output);
+        let b = dots.get(input);
+        if (a == null || b == null) {
+          continue;
+        }
+        add(a, b);
+      }
+
+      if (dotDragState.value != null) {
+        let { dot, pos } = dotDragState.value;
+        let a = dots.get(dot);
+        if (a != null) {
+          const b = uiToWorld(size, transform, pos);
+
+          if (decodeDotId(dot).input) {
+            add(b, a);
+          } else {
+            add(a, b);
+          }
+        }
+      }
+
       return path;
     });
+
+    interface DragState {
+      dot: number;
+      pos: Vec2;
+    }
+
+    let dotDragState = ref<DragState | null>(null);
 
     return {
       graph,
@@ -291,10 +251,10 @@ export default defineComponent({
       originStyle,
       linksPath,
       evalCtx,
+
       onWheel(e: WheelEvent) {
         let c = { x: e.clientX - size.w / 2, y: e.clientY - size.h / 2 };
         let p = transformPoint(transform, c);
-        console.log(e.deltaMode);
 
         let delta = normalizedDeltaY(e);
 
@@ -318,6 +278,33 @@ export default defineComponent({
         for (let [key, val] of newDots) {
           dots.set(key, val);
         }
+      },
+      dragDot(dot: number) {
+        absDragHandler(
+          (pos) => {
+            dotDragState.value = { dot, pos };
+          },
+          () => {
+            dotDragState.value = null;
+          }
+        );
+      },
+      dropDot(dot: number) {
+        if (dotDragState.value) {
+          let dot2 = dotDragState.value.dot;
+          let dec1 = decodeDotId(dot);
+          let dec2 = decodeDotId(dot2);
+          if (dec1.node != dec2.node && dec1.input != dec2.input) {
+            // TODO: check cycles
+            console.log(dec1.node, dec2.node);
+            if (dec1.input) {
+              graph.links.set(dot, dot2);
+            } else {
+              graph.links.set(dot2, dot);
+            }
+          }
+        }
+        dotDragState.value = null;
       },
     };
   },

@@ -6,23 +6,30 @@
     <div
       layout="row u1"
       class="input"
-      v-for="input in kind.inputs"
-      :key="input.id"
+      v-for="(input, i) in kind.inputs"
+      :key="i"
     >
       <div
-        :class="`dot kind-${input.kind}`"
-        :ref="(e) => setDot(input.id, true, e)"
+        :class="`dot kind-${data.inputs[i].value}`"
+        :ref="(e) => setDot(i, true, e)"
+        @mousedown.prevent="dragDot(i, true)"
+        @mouseup.prevent="dropDot(i, true)"
       ></div>
       <div class="label" flex>{{ input.label }}</div>
     </div>
     <div
       layout="row u1"
       class="output"
-      v-for="output in kind.outputs"
-      :key="output.id"
+      v-for="(output, i) in kind.outputs"
+      :key="i"
     >
       <div class="label" flex>{{ output.label }}</div>
-      <div class="dot" :ref="(e) => setDot(output.id, false, e)"></div>
+      <div
+        :class="`dot kind-${data.outputs[i].value.kind}`"
+        :ref="(e) => setDot(i, false, e)"
+        @mousedown.prevent="dragDot(i, false)"
+        @mouseup.prevent="dropDot(i, false)"
+      ></div>
     </div>
     <div class="preview" v-if="data.preview">
       <RenderVNode :node="data.preview.value" />
@@ -50,12 +57,12 @@ import {
 } from "../graph";
 import RenderVNode from "./RenderVNode.vue";
 import { reqobj, req, dragHandler } from "../util";
+import { kinds } from "../kinds";
 
 export default defineComponent({
   name: "VisualNode",
   props: {
     worldTransform: reqobj<Transform>(),
-    kind: reqobj<NodeKind>(),
     nodeId: req(Number),
     node: reqobj<GraphNode>(),
     data: reqobj<NodeData>(),
@@ -113,6 +120,13 @@ export default defineComponent({
 
     return {
       rootStyle,
+      kind: computed(() => {
+        let kind = kinds.get(props.node.kind);
+        if (kind == null) {
+          throw new Error(`Invalid kind id ${props.node.kind}`);
+        }
+        return kind;
+      }),
       drag: dragHandler(({ x: deltaX, y: deltaY }) => {
         const x = props.node.pos.x - deltaX * props.worldTransform.scale;
         const y = props.node.pos.y - deltaY * props.worldTransform.scale;
@@ -124,6 +138,14 @@ export default defineComponent({
         }
         const id = encodeDotId(props.nodeId, dot, input);
         dots.value.set(id, value);
+      },
+      dragDot(dot: number, input: boolean) {
+        const id = encodeDotId(props.nodeId, dot, input);
+        emit("drag-dot", id);
+      },
+      dropDot(dot: number, input: boolean) {
+        const id = encodeDotId(props.nodeId, dot, input);
+        emit("drop-dot", id);
       },
     };
   },

@@ -35,6 +35,25 @@ export function clamp(t: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, t));
 }
 
+export function absDragHandler(
+  onDrag: (pos: Vec2) => void,
+  onDrop?: (pos: Vec2) => void
+) {
+  function move(e: MouseEvent) {
+    onDrag({ x: e.clientX, y: e.clientY });
+  }
+
+  function drop(e: MouseEvent) {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", drop);
+    if (onDrop != null) {
+      onDrop({ x: e.clientX, y: e.clientY });
+    }
+  }
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", drop);
+}
+
 export function dragHandler(onDrag: (delta: Vec2) => void) {
   let drag: Vec2 | null = null;
   return function down(e: MouseEvent) {
