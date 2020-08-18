@@ -19,14 +19,15 @@ export function isDefined<T>(t: T | null | undefined): t is T {
 }
 
 export function normalizedDeltaY(e: WheelEvent): number {
+  console.log(e.deltaMode, e.deltaY);
   switch (e.deltaMode) {
     case WheelEvent.DOM_DELTA_LINE:
-      return e.deltaY / 40;
+      return e.deltaY / 3;
       break;
     case WheelEvent.DOM_DELTA_PAGE:
-      return e.deltaY / 800;
+      return e.deltaY / 40;
     case WheelEvent.DOM_DELTA_PIXEL:
-      return e.deltaY;
+      return e.deltaY / 150;
   }
   throw new Error("deltaMode missing");
 }

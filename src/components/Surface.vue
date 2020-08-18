@@ -1,11 +1,18 @@
 <template>
-  <div class="surface" ref="root" @wheel="onWheel" @mousedown="pan">
+  <div class="surface" ref="root">
     <svg
       xmlns="http://www.w3.org/2000/svg"
       :viewBox="viewBox"
       :width="size.w"
       :height="size.h"
     >
+      <!-- <rect
+        :x="0"
+        :y="0"
+        :width="1000"
+        :height="1000"
+        fill="url(#polka-dots)"
+      ></rect> -->
       <path
         :d="bgLines.fine"
         :stroke-width="transform.scale * 1"
@@ -18,14 +25,6 @@
         fill="none"
         stroke="#eeeeee"
       />
-      <!-- <circle
-        v-for="(dot, i) in dots"
-        :key="i"
-        :cx="dot.x"
-        :cy="dot.y"
-        fill="blue"
-        r="7"
-      />-->
       <path :d="linksPath" stroke="black" fill="none" stroke-width="1" />
     </svg>
     <div class="origin" :style="originStyle">
@@ -46,7 +45,15 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, reactive, computed, onMounted, ref, h } from "vue";
+import {
+  defineComponent,
+  reactive,
+  computed,
+  onMounted,
+  ref,
+  h,
+  Component,
+} from "vue";
 import {
   nextId,
   isDefined,
@@ -68,6 +75,7 @@ import {
   decodeDotId,
 } from "../graph";
 import { EvalContext } from "../evalContext";
+import { panZoom, handlePanZoomTransform } from "../composites/panZoom";
 import VisualNode from "./VisualNode.vue";
 
 const graph: VisualGraph = {
@@ -115,7 +123,13 @@ export default defineComponent({
 
     let size = reactive({ w: 0, h: 0 });
 
-    let root = ref(null);
+    let root = ref<HTMLElement | null>(null);
+
+    panZoom(root, (e) => {
+      const newTransform = handlePanZoomTransform(e, size, transform);
+      Object.assign(transform, newTransform);
+    });
+
     let dots = reactive(new Map<number, Vec2>());
 
     let evalCtx = new EvalContext(graph);
@@ -126,6 +140,19 @@ export default defineComponent({
       let x = (transform.translateX - size.w / 2) * transform.scale;
       let y = (transform.translateY - size.h / 2) * transform.scale;
       return { w, h, x, y };
+    });
+    const bgSpace = computed(() => {
+      const { x, y, w, h } = svgSpace.value;
+      const STEP = 100;
+      const fx = Math.floor(x / STEP) * STEP;
+      const fy = Math.floor(y / STEP) * STEP;
+
+      const dx = x - fx;
+      const dy = y - fy;
+
+      const cw = Math.ceil((w + dx) / STEP) * STEP;
+      const ch = Math.ceil((w + dx) / STEP) * STEP;
+      return { x: fx, y: fy, w: cw, h: ch };
     });
 
     const bgLines = computed(() => {
@@ -251,29 +278,8 @@ export default defineComponent({
       originStyle,
       linksPath,
       evalCtx,
-
-      onWheel(e: WheelEvent) {
-        let c = { x: e.clientX - size.w / 2, y: e.clientY - size.h / 2 };
-        let p = transformPoint(transform, c);
-
-        let delta = normalizedDeltaY(e);
-
-        let f = 1 + delta * 0.01;
-        let s = transform.scale;
-        let ns = s * f;
-        ns = clamp(ns, 0.05, 99.9);
-
-        let dx = ((p.x * ns) / s - p.x) / ns;
-        let dy = ((p.y * ns) / s - p.y) / ns;
-
-        transform.translateX -= dx;
-        transform.translateY -= dy;
-        transform.scale = ns;
-      },
-      pan: dragHandler(({ x, y }) => {
-        transform.translateX += x;
-        transform.translateY += y;
-      }),
+      svgSpace,
+      bgSpace,
       updateDots(newDots: Map<number, Vec2>) {
         for (let [key, val] of newDots) {
           dots.set(key, val);
@@ -317,6 +323,7 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* background-image: linear-gradient(#111 10%, #333 10%, #333); */
 }
 
 .origin {
