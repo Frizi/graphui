@@ -32,7 +32,12 @@ export function handlePanZoomTransform(
   size: { w: number; h: number },
   transform: Transform
 ): Transform {
-  const f = 1 + e.dz * 0.005;
+  let dz = e.dz * 0.005;
+  if (Math.abs(e.dz) > 110) {
+    // handle chrome huge step wheel sizes
+    dz *= 0.2;
+  }
+  const f = dz > 0 ? 1 + dz : 1 / (1 - dz);
   const prevScale = transform.scale;
   const scale = clamp(prevScale * f, 0.05, 99.9);
 

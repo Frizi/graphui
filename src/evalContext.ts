@@ -45,9 +45,9 @@ export class EvalContext {
           outputs: kind.outputs.map((output) =>
             computed(() => output.run(ctx))
           ),
-          preview: computed(() =>
-            kind.preview == null ? null : kind.preview(ctx)
-          ),
+          preview() {
+            return kind.preview == null ? null : kind.preview(ctx);
+          },
         })
       );
     }

@@ -19,7 +19,6 @@ export function isDefined<T>(t: T | null | undefined): t is T {
 }
 
 export function normalizedDeltaY(e: WheelEvent): number {
-  console.log(e.deltaMode, e.deltaY);
   switch (e.deltaMode) {
     case WheelEvent.DOM_DELTA_LINE:
       return e.deltaY / 3;

@@ -1,4 +1,5 @@
 import { VNode, ComputedRef } from "vue";
+export const IMAGE_SIZE = 256;
 
 export interface Vec2 {
   x: number;
@@ -16,7 +17,7 @@ export interface GraphNode {
 export interface NodeData {
   inputs: Array<ComputedRef<DotKind>>;
   outputs: Array<ComputedRef<DotValue | null>>;
-  preview: ComputedRef<VNode | null>;
+  preview(): VNode | null;
 }
 
 // export interface OutputData {
@@ -24,9 +25,10 @@ export interface NodeData {
 //   value: ComputedRef<DotValue>;
 // }
 
-type Rgba = [number, number, number, number];
+export type Rgba = [number, number, number, number];
+export type Vec3 = [number, number, number];
 
-interface NodeCtx<S = any> {
+export interface NodeCtx<S = any> {
   getInput(input: number): DotValue | null;
   state(): S | null;
   setState(value: S | null): void;
@@ -40,7 +42,7 @@ export interface NodeKind<S = any> {
   name: string;
   inputs: NodeInput[];
   outputs: Array<NodeOutput<S>>;
-  preview: ((ctx: PreviewCtx<S>) => VNode) | null;
+  preview?: (ctx: PreviewCtx<S>) => VNode | null;
 }
 
 export interface Transform {
@@ -100,9 +102,10 @@ export interface NodeOutput<S = any> {
 
 export const enum DotKind {
   NUMBER = 1,
-  COLOR = 2,
-  IMAGE = 4,
-  ANY = 7,
+  VECTOR = 2,
+  COLOR = 4,
+  IMAGE = 8,
+  ANY = 15,
 }
 
 export interface DotValueColor {
@@ -115,12 +118,21 @@ export interface DotValueNumber {
   value: number;
 }
 
-export interface DotValueImage {
-  kind: DotKind.IMAGE;
-  value: Uint8Array;
+export interface DotValueVector {
+  kind: DotKind.VECTOR;
+  value: Vec3;
 }
 
-export type DotValue = DotValueColor | DotValueNumber | DotValueImage;
+export interface DotValueImage {
+  kind: DotKind.IMAGE;
+  value: Float32Array;
+}
+
+export type DotValue =
+  | DotValueColor
+  | DotValueNumber
+  | DotValueImage
+  | DotValueVector;
 
 const INPUT_MASK = 0x40000000;
 

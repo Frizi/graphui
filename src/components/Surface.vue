@@ -16,18 +16,6 @@
       :width="size.w"
       :height="size.h"
     >
-      <!-- <path
-        :d="bgLines.fine"
-        :stroke-width="transform.scale * 1"
-        fill="none"
-        stroke="#eeeeee"
-      />
-      <path
-        :d="bgLines.coarse"
-        :stroke-width="transform.scale * 3"
-        fill="none"
-        stroke="#eeeeee"
-      /> -->
       <path :d="linksPath" stroke="black" fill="none" stroke-width="1" />
     </svg>
     <div class="origin" :style="originStyle">
@@ -43,6 +31,7 @@
         @drag-dot="dragDot"
         @drop-dot="dropDot"
         @unset-dot="unsetDot"
+        @rename="entry[1].name = $event"
       />
       <NodeKindMenu
         v-if="menu.show"
@@ -62,6 +51,7 @@ import {
   onMounted,
   ref,
   watchEffect,
+  onUnmounted,
 } from "vue";
 import { absDragHandler } from "../util";
 import {
@@ -76,37 +66,8 @@ import { EvalContext } from "../evalContext";
 import { panZoom, handlePanZoomTransform } from "../composites/panZoom";
 import VisualNode from "./VisualNode.vue";
 import NodeKindMenu from "./NodeKindMenu.vue";
-
-const graph: VisualGraph = {
-  nodes: reactive(
-    new Map(
-      [
-        {
-          kind: 1,
-          name: "Value",
-          pos: { x: -100, y: -50 },
-          minWidth: null,
-          state: null,
-        },
-        {
-          kind: 1,
-          name: "Value",
-          pos: { x: -150, y: 60 },
-          minWidth: null,
-          state: null,
-        },
-        {
-          kind: 0,
-          name: "Sum",
-          pos: { x: 150, y: -30 },
-          minWidth: null,
-          state: null,
-        },
-      ].entries()
-    )
-  ),
-  links: reactive(new Map([link(0, 0, 2, 0), link(1, 0, 2, 1)])),
-};
+import { drawGrid } from "@/draw";
+import { kinds } from "@/kinds";
 
 export default defineComponent({
   name: "Surface",
@@ -136,6 +97,36 @@ export default defineComponent({
     });
 
     let dots = reactive(new Map<number, Vec2>());
+    const graph: VisualGraph = {
+      nodes: reactive(
+        new Map(
+          [
+            {
+              kind: 0,
+              name: kinds.get(0)!.name,
+              pos: { x: -100, y: -50 },
+              minWidth: null,
+              state: null,
+            },
+            {
+              kind: 0,
+              name: kinds.get(0)!.name,
+              pos: { x: -150, y: 60 },
+              minWidth: null,
+              state: null,
+            },
+            {
+              kind: 1,
+              name: kinds.get(1)!.name,
+              pos: { x: 150, y: -30 },
+              minWidth: null,
+              state: null,
+            },
+          ].entries()
+        )
+      ),
+      links: reactive(new Map([link(0, 0, 2, 0), link(1, 0, 2, 1)])),
+    };
 
     let evalCtx = new EvalContext(graph);
 
@@ -150,56 +141,7 @@ export default defineComponent({
     watchEffect(() => {
       let ctx = canvas.value?.getContext("2d");
       if (ctx == null) return;
-      let log = Math.log10(transform.scale);
-      let distance = Math.pow(10, Math.floor(log) + 2) * 2;
-      let coarseDistance = distance * 5;
-      let { x, y, w, h } = svgSpace.value;
-      let fw = (Math.ceil(w / distance) + 1) * distance;
-      let fh = (Math.ceil(h / distance) + 1) * distance;
-      let fx = Math.floor(x / distance) * distance;
-      let fy = Math.floor(y / distance) * distance;
-      let cw = (Math.ceil(w / coarseDistance) + 1) * coarseDistance;
-      let ch = (Math.ceil(h / coarseDistance) + 1) * coarseDistance;
-      let cx = Math.floor(x / coarseDistance) * coarseDistance;
-      let cy = Math.floor(y / coarseDistance) * coarseDistance;
-
-      ctx.strokeStyle = "#eeeeee";
-      ctx.save();
-      ctx.scale(pixelRatio, pixelRatio);
-      ctx.translate(
-        -transform.translateX + size.w / 2,
-        -transform.translateY + size.h / 2
-      );
-      ctx.scale(1 / transform.scale, 1 / transform.scale);
-
-      ctx.clearRect(x, y, w, h);
-
-      ctx.beginPath();
-      for (let nx = 0; nx < fw; nx += distance) {
-        ctx.moveTo(fx + nx, fy);
-        ctx.lineTo(fx + nx, fy + fh);
-      }
-
-      for (let ny = 0; ny < fw; ny += distance) {
-        ctx.moveTo(fx, fy + ny);
-        ctx.lineTo(fx + fw, fy + ny);
-      }
-      ctx.lineWidth = 1 * transform.scale;
-      ctx.stroke();
-
-      ctx.beginPath();
-      for (let nx = 0; nx < cw; nx += coarseDistance) {
-        ctx.moveTo(cx + nx, cy);
-        ctx.lineTo(cx + nx, cy + ch);
-      }
-
-      for (let ny = 0; ny < cw; ny += coarseDistance) {
-        ctx.moveTo(cx, cy + ny);
-        ctx.lineTo(cx + cw, cy + ny);
-      }
-      ctx.lineWidth = 3 * transform.scale;
-      ctx.stroke();
-      ctx.restore();
+      drawGrid(ctx, svgSpace.value, transform, pixelRatio);
     });
 
     const bgLines = computed(() => {
@@ -250,6 +192,15 @@ export default defineComponent({
       };
     });
 
+    function globalHideModal(e: MouseEvent) {
+      if (e.target instanceof Element) {
+        let isInMenu = e.target.closest(".menu") != null;
+        if (!isInMenu) {
+          menu.show = false;
+        }
+      }
+    }
+
     onMounted(() => {
       let e = root.value! as Element;
       // todo: remove this hack once ResizeObserver decl ships
@@ -264,6 +215,13 @@ export default defineComponent({
       let rect = e.getBoundingClientRect();
       size.w = rect.width;
       size.h = rect.height;
+
+      window.addEventListener("mousedown", globalHideModal, { capture: true });
+    });
+    onUnmounted(() => {
+      window.removeEventListener("mousedown", globalHideModal, {
+        capture: true,
+      });
     });
 
     let linksPath = computed(() => {
@@ -353,7 +311,7 @@ export default defineComponent({
       addNode(kind: number) {
         let nextId = graph.nodes.size;
         graph.nodes.set(nextId, {
-          name: "New node",
+          name: kinds.get(kind)!.name,
           kind,
           pos: menu.pos,
           minWidth: null,
