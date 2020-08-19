@@ -12,8 +12,8 @@
       <div
         :class="`dot kind-${data.inputs[i].value}`"
         :ref="(e) => setDot(i, true, e)"
-        @mousedown.prevent="dragDot(i, true)"
-        @mouseup.prevent="dropDot(i, true)"
+        @mousedown.prevent="dragDot($event, i, true)"
+        @mouseup.prevent="dropDot($event, i, true)"
       ></div>
       <div class="label" flex>{{ input.label }}</div>
     </div>
@@ -25,10 +25,10 @@
     >
       <div class="label" flex>{{ output.label }}</div>
       <div
-        :class="`dot kind-${data.outputs[i].value.kind}`"
+        :class="`dot kind-${data.outputs[i].value?.kind}`"
         :ref="(e) => setDot(i, false, e)"
-        @mousedown.prevent="dragDot(i, false)"
-        @mouseup.prevent="dropDot(i, false)"
+        @mousedown.prevent="dragDot($event, i, false)"
+        @mouseup.prevent="dropDot(event, i, false)"
       ></div>
     </div>
     <div class="preview" v-if="data.preview">
@@ -139,11 +139,17 @@ export default defineComponent({
         const id = encodeDotId(props.nodeId, dot, input);
         dots.value.set(id, value);
       },
-      dragDot(dot: number, input: boolean) {
+      dragDot(e: MouseEvent, dot: number, input: boolean) {
         const id = encodeDotId(props.nodeId, dot, input);
-        emit("drag-dot", id);
+        if (e.ctrlKey) {
+          if (input) {
+            emit("unset-dot", id);
+          }
+        } else {
+          emit("drag-dot", id);
+        }
       },
-      dropDot(dot: number, input: boolean) {
+      dropDot(e: MouseEvent, dot: number, input: boolean) {
         const id = encodeDotId(props.nodeId, dot, input);
         emit("drop-dot", id);
       },

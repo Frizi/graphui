@@ -1,19 +1,22 @@
 <template>
-  <div class="surface" ref="root">
+  <div
+    class="surface"
+    ref="root"
+    @mousedown="onMouseDown"
+    @contextmenu="onContextMenu"
+  >
+    <canvas
+      ref="canvas"
+      :width="size.w * pixelRatio"
+      :height="size.h * pixelRatio"
+    />
     <svg
       xmlns="http://www.w3.org/2000/svg"
       :viewBox="viewBox"
       :width="size.w"
       :height="size.h"
     >
-      <!-- <rect
-        :x="0"
-        :y="0"
-        :width="1000"
-        :height="1000"
-        fill="url(#polka-dots)"
-      ></rect> -->
-      <path
+      <!-- <path
         :d="bgLines.fine"
         :stroke-width="transform.scale * 1"
         fill="none"
@@ -24,7 +27,7 @@
         :stroke-width="transform.scale * 3"
         fill="none"
         stroke="#eeeeee"
-      />
+      /> -->
       <path :d="linksPath" stroke="black" fill="none" stroke-width="1" />
     </svg>
     <div class="origin" :style="originStyle">
@@ -39,6 +42,13 @@
         @move="entry[1].pos = $event"
         @drag-dot="dragDot"
         @drop-dot="dropDot"
+        @unset-dot="unsetDot"
+      />
+      <NodeKindMenu
+        v-if="menu.show"
+        :pos="menu.pos"
+        @choose="addNode"
+        @mousedown.stop
       />
     </div>
   </div>
@@ -51,25 +61,13 @@ import {
   computed,
   onMounted,
   ref,
-  h,
-  Component,
+  watchEffect,
 } from "vue";
-import {
-  nextId,
-  isDefined,
-  normalizedDeltaY,
-  clamp,
-  dragHandler,
-  absDragHandler,
-} from "../util";
+import { absDragHandler } from "../util";
 import {
   Transform,
   VisualGraph,
-  ComputedLinks,
-  transformPoint,
   uiToWorld,
-  DotKind,
-  encodeDotId,
   Vec2,
   link,
   decodeDotId,
@@ -77,6 +75,7 @@ import {
 import { EvalContext } from "../evalContext";
 import { panZoom, handlePanZoomTransform } from "../composites/panZoom";
 import VisualNode from "./VisualNode.vue";
+import NodeKindMenu from "./NodeKindMenu.vue";
 
 const graph: VisualGraph = {
   nodes: reactive(
@@ -113,6 +112,7 @@ export default defineComponent({
   name: "Surface",
   components: {
     VisualNode,
+    NodeKindMenu,
   },
   setup() {
     let transform: Transform = reactive({
@@ -122,10 +122,15 @@ export default defineComponent({
     });
 
     let size = reactive({ w: 0, h: 0 });
+    let pixelRatio = window.devicePixelRatio;
 
     let root = ref<HTMLElement | null>(null);
+    let canvas = ref<HTMLCanvasElement | null>(null);
+
+    let clickValid = false;
 
     panZoom(root, (e) => {
+      clickValid = false;
       const newTransform = handlePanZoomTransform(e, size, transform);
       Object.assign(transform, newTransform);
     });
@@ -141,18 +146,60 @@ export default defineComponent({
       let y = (transform.translateY - size.h / 2) * transform.scale;
       return { w, h, x, y };
     });
-    const bgSpace = computed(() => {
-      const { x, y, w, h } = svgSpace.value;
-      const STEP = 100;
-      const fx = Math.floor(x / STEP) * STEP;
-      const fy = Math.floor(y / STEP) * STEP;
 
-      const dx = x - fx;
-      const dy = y - fy;
+    watchEffect(() => {
+      let ctx = canvas.value?.getContext("2d");
+      if (ctx == null) return;
+      let log = Math.log10(transform.scale);
+      let distance = Math.pow(10, Math.floor(log) + 2) * 2;
+      let coarseDistance = distance * 5;
+      let { x, y, w, h } = svgSpace.value;
+      let fw = (Math.ceil(w / distance) + 1) * distance;
+      let fh = (Math.ceil(h / distance) + 1) * distance;
+      let fx = Math.floor(x / distance) * distance;
+      let fy = Math.floor(y / distance) * distance;
+      let cw = (Math.ceil(w / coarseDistance) + 1) * coarseDistance;
+      let ch = (Math.ceil(h / coarseDistance) + 1) * coarseDistance;
+      let cx = Math.floor(x / coarseDistance) * coarseDistance;
+      let cy = Math.floor(y / coarseDistance) * coarseDistance;
 
-      const cw = Math.ceil((w + dx) / STEP) * STEP;
-      const ch = Math.ceil((w + dx) / STEP) * STEP;
-      return { x: fx, y: fy, w: cw, h: ch };
+      ctx.strokeStyle = "#eeeeee";
+      ctx.save();
+      ctx.scale(pixelRatio, pixelRatio);
+      ctx.translate(
+        -transform.translateX + size.w / 2,
+        -transform.translateY + size.h / 2
+      );
+      ctx.scale(1 / transform.scale, 1 / transform.scale);
+
+      ctx.clearRect(x, y, w, h);
+
+      ctx.beginPath();
+      for (let nx = 0; nx < fw; nx += distance) {
+        ctx.moveTo(fx + nx, fy);
+        ctx.lineTo(fx + nx, fy + fh);
+      }
+
+      for (let ny = 0; ny < fw; ny += distance) {
+        ctx.moveTo(fx, fy + ny);
+        ctx.lineTo(fx + fw, fy + ny);
+      }
+      ctx.lineWidth = 1 * transform.scale;
+      ctx.stroke();
+
+      ctx.beginPath();
+      for (let nx = 0; nx < cw; nx += coarseDistance) {
+        ctx.moveTo(cx + nx, cy);
+        ctx.lineTo(cx + nx, cy + ch);
+      }
+
+      for (let ny = 0; ny < cw; ny += coarseDistance) {
+        ctx.moveTo(cx, cy + ny);
+        ctx.lineTo(cx + cw, cy + ny);
+      }
+      ctx.lineWidth = 3 * transform.scale;
+      ctx.stroke();
+      ctx.restore();
     });
 
     const bgLines = computed(() => {
@@ -222,7 +269,7 @@ export default defineComponent({
     let linksPath = computed(() => {
       let path = "";
       function add(a: Vec2, b: Vec2) {
-        let delta = b.x - a.x * 0.5;
+        let delta = (b.x - a.x) * 0.5;
 
         let offset =
           delta > 0
@@ -267,23 +314,52 @@ export default defineComponent({
 
     let dotDragState = ref<DragState | null>(null);
 
+    let menu = reactive({ show: false, pos: { x: 0, y: 0 } });
+
     return {
       graph,
       transform,
       dots,
       size,
+      pixelRatio,
       root,
+      canvas,
       viewBox,
       bgLines,
       originStyle,
       linksPath,
       evalCtx,
-      svgSpace,
-      bgSpace,
+      menu,
       updateDots(newDots: Map<number, Vec2>) {
         for (let [key, val] of newDots) {
           dots.set(key, val);
         }
+      },
+      onMouseDown() {
+        clickValid = true;
+        menu.show = false;
+      },
+      onContextMenu(e: MouseEvent) {
+        if (clickValid) {
+          e.preventDefault();
+          menu.pos = uiToWorld(size, transform, {
+            x: e.pageX,
+            y: e.pageY,
+          });
+
+          menu.show = true;
+        }
+      },
+      addNode(kind: number) {
+        let nextId = graph.nodes.size;
+        graph.nodes.set(nextId, {
+          name: "New node",
+          kind,
+          pos: menu.pos,
+          minWidth: null,
+          state: null,
+        });
+        menu.show = false;
       },
       dragDot(dot: number) {
         absDragHandler(
@@ -302,7 +378,6 @@ export default defineComponent({
           let dec2 = decodeDotId(dot2);
           if (dec1.node != dec2.node && dec1.input != dec2.input) {
             // TODO: check cycles
-            console.log(dec1.node, dec2.node);
             if (dec1.input) {
               graph.links.set(dot, dot2);
             } else {
@@ -312,14 +387,21 @@ export default defineComponent({
         }
         dotDragState.value = null;
       },
+      unsetDot(dot: number) {
+        graph.links.delete(dot);
+      },
     };
   },
 });
 </script>
 
 <style scoped>
-.surface {
+.surface,
+canvas,
+svg {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
