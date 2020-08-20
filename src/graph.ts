@@ -101,6 +101,8 @@ export interface NodeOutput<S = any> {
 }
 
 export const enum DotKind {
+  // kinds must be sorted by strength:
+  // all lower types can be upcasted to higher type
   NUMBER = 1,
   VECTOR = 2,
   COLOR = 4,
@@ -122,10 +124,25 @@ export interface DotValueVector {
   kind: DotKind.VECTOR;
   value: Vec3;
 }
-
 export interface DotValueImage {
   kind: DotKind.IMAGE;
   value: Float32Array;
+}
+
+export function newValNumber(value: number): DotValueNumber {
+  return { kind: DotKind.NUMBER, value };
+}
+
+export function newValVector(value: Vec3): DotValueVector {
+  return { kind: DotKind.VECTOR, value };
+}
+
+export function newValColor(value: Rgba): DotValueColor {
+  return { kind: DotKind.COLOR, value };
+}
+
+export function newValImage(value: Float32Array): DotValueImage {
+  return { kind: DotKind.IMAGE, value };
 }
 
 export type DotValue =

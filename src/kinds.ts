@@ -7,6 +7,11 @@ import {
   DotValueImage,
   Vec3,
   Rgba,
+  DotValueColor,
+  newValNumber,
+  newValVector,
+  newValColor,
+  newValImage,
 } from "./graph";
 import { h } from "vue";
 import InputAutosize from "./components/InputAutosize.vue";
@@ -19,6 +24,96 @@ function add<S = any>(k: NodeKind<S>): number {
   const thisId = id++;
   kinds.set(thisId, k);
   return thisId;
+}
+
+type UnifiedValues =
+  | ImageValues
+  | MixedValues
+  | NumberValues
+  | VectorValues
+  | ColorValues;
+interface MixedValues {
+  kind: DotKind.ANY;
+  values: (DotValueColor | DotValueImage)[];
+}
+interface ImageValues {
+  kind: DotKind.IMAGE;
+  values: Float32Array[];
+}
+interface NumberValues {
+  kind: DotKind.NUMBER;
+  values: number[];
+}
+
+interface VectorValues {
+  kind: DotKind.VECTOR;
+  values: Vec3[];
+}
+
+interface ColorValues {
+  kind: DotKind.COLOR;
+  values: Rgba[];
+}
+
+function unifyValues(values: DotValue[]): UnifiedValues | null {
+  const allTypes = values.reduce((k, v) => k | v.kind, 0);
+  if (allTypes === 0) return null;
+  if (allTypes === DotKind.IMAGE) {
+    return {
+      kind: DotKind.IMAGE,
+      values: values.map((v) => v.value as Float32Array),
+    };
+  }
+  if (allTypes === DotKind.NUMBER) {
+    return {
+      kind: DotKind.NUMBER,
+      values: values.map((v) => v.value as number),
+    };
+  }
+  if (allTypes === DotKind.VECTOR) {
+    return {
+      kind: DotKind.VECTOR,
+      values: values.map((v) => v.value as Vec3),
+    };
+  }
+  if (allTypes === DotKind.COLOR) {
+    return {
+      kind: DotKind.COLOR,
+      values: values.map((v) => v.value as Rgba),
+    };
+  }
+
+  if ((allTypes & DotKind.IMAGE) === 0) {
+    // mixed uniforms, can be upcasted to uniform type
+    const strongestType = values.reduce((k, v) => Math.max(k, v.kind), 0);
+    switch (strongestType) {
+      case DotKind.COLOR:
+        return { kind: DotKind.COLOR, values: values.map(asColor) };
+      case DotKind.VECTOR:
+        return { kind: DotKind.VECTOR, values: values.map(asVector) };
+      // number should be already eliminated, as it is the weakest type
+      // and thus can't be the strongest in the mix
+      case DotKind.NUMBER:
+      case DotKind.IMAGE:
+      default:
+        throw new Error("unreachable");
+    }
+  } else {
+    // mixed uniforms and images.
+    // All uniforms are upcasted to color for simplicity
+    return {
+      kind: DotKind.ANY,
+      values: values.map((v) => {
+        if (v.kind === DotKind.IMAGE) {
+          return v;
+        } else {
+          return { kind: DotKind.COLOR, value: asColor(v) };
+        }
+      }),
+    };
+  }
+
+  return null;
 }
 
 const MAX_INDEX = IMAGE_SIZE * IMAGE_SIZE * 4;
@@ -49,6 +144,10 @@ add<number>({
   },
 });
 
+const NUM_ZERO = newValNumber(0);
+const NUM_ONE = newValNumber(1);
+const NUM_HALF = newValNumber(0.5);
+
 add({
   name: "Sum",
   inputs: [
@@ -60,104 +159,47 @@ add({
       id: 0,
       label: "result",
       run(ctx) {
-        const inputA = ctx.getInput(0);
-        const inputB = ctx.getInput(1);
-        if (inputA != null && inputB != null) {
-          if (
-            inputA.kind === DotKind.NUMBER &&
-            inputB.kind === DotKind.NUMBER
-          ) {
-            return {
-              kind: DotKind.NUMBER,
-              value: inputA.value + inputB.value,
-            };
+        const unified = unifyValues([
+          ctx.getInput(0) || NUM_ZERO,
+          ctx.getInput(1) || NUM_ZERO,
+        ]);
+        if (unified == null) return null;
+        switch (unified.kind) {
+          case DotKind.NUMBER: {
+            const [a, b] = unified.values;
+            return newValNumber(a + b);
           }
-
-          if (
-            inputA.kind === DotKind.VECTOR &&
-            inputB.kind === DotKind.VECTOR
-          ) {
-            const a = inputA.value;
-            const b = inputB.value;
-            return {
-              kind: DotKind.VECTOR,
-              value: [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-            };
+          case DotKind.VECTOR: {
+            const [a, b] = unified.values;
+            return newValVector(vecAdd(a, b));
           }
-
-          if (
-            inputA.kind & (DotKind.COLOR | DotKind.VECTOR) &&
-            inputB.kind & (DotKind.COLOR | DotKind.VECTOR)
-          ) {
-            const a = asColor(inputA);
-            const b = asColor(inputB);
-            return {
-              kind: DotKind.COLOR,
-              value: [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]],
-            };
+          case DotKind.COLOR: {
+            const [a, b] = unified.values;
+            return newValColor(colAdd(a, b));
           }
-
-          let inputImg: DotValueImage;
-          let inputOther: DotValue;
-          if (inputA.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputA, inputB];
-          } else if (inputB.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputB, inputA];
-          } else {
-            return null;
-          }
-
-          if (inputOther.kind == DotKind.IMAGE) {
+          case DotKind.IMAGE: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
+            const [a, b] = unified.values;
             for (let i = 0; i < MAX_INDEX; i++) {
               pixels[i] = a[i] + b[i];
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          if (inputOther.kind == DotKind.NUMBER) {
+          case DotKind.ANY: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
-            for (let i = 0; i < MAX_INDEX; i++) {
-              pixels[i] = a[i] + b;
-            }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
-          }
-
-          if (inputOther.kind & (DotKind.COLOR | DotKind.VECTOR)) {
-            const pixels = newImage();
-            const a = inputImg.value;
-            const b = asColor(inputOther);
+            const [img, color] = splitImgColor(
+              unified.values[0],
+              unified.values[1]
+            );
             for (let i = 0; i < MAX_INDEX; i += 4) {
-              pixels[i] = a[i] + b[0];
-              pixels[i + 1] = a[i + 1] + b[1];
-              pixels[i + 2] = a[i + 2] + b[2];
-              pixels[i + 3] = a[i + 3] + b[3];
+              pixels[i] = img[i] + color[0];
+              pixels[i + 1] = img[i + 1] + color[1];
+              pixels[i + 2] = img[i + 2] + color[2];
+              pixels[i + 3] = img[i + 3] + color[3];
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          return null;
         }
-        if (inputA != null) {
-          return inputA;
-        }
-        if (inputB != null) {
-          return inputB;
-        }
-        return null;
       },
     },
   ],
@@ -176,115 +218,62 @@ add({
       id: 0,
       label: "result",
       run(ctx) {
-        const inputA = ctx.getInput(0);
-        const inputB = ctx.getInput(1);
-        const factor = asNumber(ctx.getInput(2), 0.5);
-
-        if (inputA != null && inputB != null) {
-          if (
-            inputA.kind === DotKind.NUMBER &&
-            inputB.kind === DotKind.NUMBER
-          ) {
-            return {
-              kind: DotKind.NUMBER,
-              value: lerp(factor, inputA.value, inputB.value),
-            };
+        const unified = unifyValues([
+          ctx.getInput(0) || NUM_ZERO,
+          ctx.getInput(1) || NUM_ZERO,
+          ctx.getInput(2) || NUM_HALF,
+        ]);
+        if (unified == null) return null;
+        switch (unified.kind) {
+          case DotKind.NUMBER: {
+            const [a, b, f] = unified.values;
+            return newValNumber(lerp(f, a, b));
           }
-
-          if (
-            inputA.kind === DotKind.VECTOR &&
-            inputB.kind === DotKind.VECTOR
-          ) {
-            const a = inputA.value;
-            const b = inputB.value;
-            return {
-              kind: DotKind.VECTOR,
-              value: [
-                lerp(factor, a[0], b[0]),
-                lerp(factor, a[1], b[1]),
-                lerp(factor, a[2], b[2]),
-              ],
-            };
+          case DotKind.VECTOR: {
+            const [a, b, f] = unified.values;
+            return newValVector([
+              lerp(f[0], a[0], b[0]),
+              lerp(f[1], a[1], b[1]),
+              lerp(f[2], a[2], b[2]),
+            ]);
           }
-
-          if (
-            inputA.kind & (DotKind.COLOR | DotKind.VECTOR) &&
-            inputB.kind & (DotKind.COLOR | DotKind.VECTOR)
-          ) {
-            const a = asColor(inputA);
-            const b = asColor(inputB);
-            return {
-              kind: DotKind.COLOR,
-              value: [
-                lerp(factor, a[0], b[0]),
-                lerp(factor, a[1], b[1]),
-                lerp(factor, a[2], b[2]),
-                lerp(factor, a[3], b[3]),
-              ],
-            };
+          case DotKind.COLOR: {
+            const [a, b, f] = unified.values;
+            return newValColor([
+              lerp(f[0], a[0], b[0]),
+              lerp(f[1], a[1], b[1]),
+              lerp(f[2], a[2], b[2]),
+              lerp(f[3], a[3], b[3]),
+            ]);
           }
-
-          let inputImg: DotValueImage;
-          let inputOther: DotValue;
-          if (inputA.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputA, inputB];
-          } else if (inputB.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputB, inputA];
-          } else {
-            return null;
-          }
-
-          if (inputOther.kind == DotKind.IMAGE) {
+          case DotKind.IMAGE: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
+            const [a, b, f] = unified.values;
             for (let i = 0; i < MAX_INDEX; i++) {
-              pixels[i] = lerp(factor, a[i], b[i]);
+              pixels[i] = lerp(f[i], a[i], b[i]);
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          if (inputOther.kind == DotKind.NUMBER) {
+          case DotKind.ANY: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
-            for (let i = 0; i < MAX_INDEX; i++) {
-              pixels[i] = lerp(factor, a[i], b);
-            }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
-          }
-
-          if (inputOther.kind & (DotKind.COLOR | DotKind.VECTOR)) {
-            const pixels = newImage();
-            const a = inputImg.value;
-            const b = asColor(inputOther);
+            const idxImage = (i: number, c: number) => i + c;
+            const idxColor = (_i: number, c: number) => c;
+            const [av, bv, fv] = unified.values;
+            const a = av.value;
+            const b = bv.value;
+            const f = fv.value;
+            const idxA = av.kind === DotKind.IMAGE ? idxImage : idxColor;
+            const idxB = bv.kind === DotKind.IMAGE ? idxImage : idxColor;
+            const idxF = fv.kind === DotKind.IMAGE ? idxImage : idxColor;
             for (let i = 0; i < MAX_INDEX; i += 4) {
-              pixels[i] = lerp(factor, a[i], b[0]);
-              pixels[i + 1] = lerp(factor, a[i + 1], b[1]);
-              pixels[i + 2] = lerp(factor, a[i + 2], b[2]);
-              pixels[i + 3] = lerp(factor, a[i + 3], b[3]);
+              pixels[i] = lerp(f[idxF(i, 0)], a[idxA(i, 0)], b[idxB(i, 0)]);
+              pixels[i + 1] = lerp(f[idxF(i, 1)], a[idxA(i, 1)], b[idxB(i, 1)]);
+              pixels[i + 2] = lerp(f[idxF(i, 2)], a[idxA(i, 2)], b[idxB(i, 2)]);
+              pixels[i + 3] = lerp(f[idxF(i, 3)], a[idxA(i, 3)], b[idxB(i, 3)]);
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          return null;
         }
-        if (inputA != null) {
-          return inputA;
-        }
-        if (inputB != null) {
-          return inputB;
-        }
-        return null;
       },
     },
   ],
@@ -302,105 +291,47 @@ add({
       id: 0,
       label: "result",
       run(ctx) {
-        const inputA = ctx.getInput(0);
-        const inputB = ctx.getInput(1);
-
-        if (inputA != null && inputB != null) {
-          if (
-            inputA.kind === DotKind.NUMBER &&
-            inputB.kind === DotKind.NUMBER
-          ) {
-            return {
-              kind: DotKind.NUMBER,
-              value: inputA.value * inputB.value,
-            };
+        const unified = unifyValues([
+          ctx.getInput(0) || NUM_ONE,
+          ctx.getInput(1) || NUM_ONE,
+        ]);
+        if (unified == null) return null;
+        switch (unified.kind) {
+          case DotKind.NUMBER: {
+            const [a, b] = unified.values;
+            return newValNumber(a * b);
           }
-
-          if (
-            inputA.kind === DotKind.VECTOR &&
-            inputB.kind === DotKind.VECTOR
-          ) {
-            const a = inputA.value;
-            const b = inputB.value;
-            return {
-              kind: DotKind.VECTOR,
-              value: [a[0] * b[0], a[1] * b[1], a[2] * b[2]],
-            };
+          case DotKind.VECTOR: {
+            const [a, b] = unified.values;
+            return newValVector(vecMul(a, b));
           }
-
-          if (
-            inputA.kind & (DotKind.COLOR | DotKind.VECTOR) &&
-            inputB.kind & (DotKind.COLOR | DotKind.VECTOR)
-          ) {
-            const a = asColor(inputA);
-            const b = asColor(inputB);
-            return {
-              kind: DotKind.COLOR,
-              value: [a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]],
-            };
+          case DotKind.COLOR: {
+            const [a, b] = unified.values;
+            return newValColor(colMul(a, b));
           }
-
-          let inputImg: DotValueImage;
-          let inputOther: DotValue;
-          if (inputA.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputA, inputB];
-          } else if (inputB.kind === DotKind.IMAGE) {
-            [inputImg, inputOther] = [inputB, inputA];
-          } else {
-            return null;
-          }
-
-          if (inputOther.kind == DotKind.IMAGE) {
+          case DotKind.IMAGE: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
+            const [a, b] = unified.values;
             for (let i = 0; i < MAX_INDEX; i++) {
               pixels[i] = a[i] * b[i];
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          if (inputOther.kind == DotKind.NUMBER) {
+          case DotKind.ANY: {
             const pixels = newImage();
-            const a = inputImg.value;
-            const b = inputOther.value;
-            for (let i = 0; i < MAX_INDEX; i++) {
-              pixels[i] = a[i] * b;
-            }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
-          }
-
-          if (inputOther.kind & (DotKind.COLOR | DotKind.VECTOR)) {
-            const pixels = newImage();
-            const a = inputImg.value;
-            const b = asColor(inputOther);
+            const [img, color] = splitImgColor(
+              unified.values[0],
+              unified.values[1]
+            );
             for (let i = 0; i < MAX_INDEX; i += 4) {
-              pixels[i] = a[i] * b[0];
-              pixels[i + 1] = a[i + 1] * b[1];
-              pixels[i + 2] = a[i + 2] * b[2];
-              pixels[i + 3] = a[i + 3] * b[3];
+              pixels[i] = img[i] * color[0];
+              pixels[i + 1] = img[i + 1] * color[1];
+              pixels[i + 2] = img[i + 2] * color[2];
+              pixels[i + 3] = img[i + 3] * color[3];
             }
-            return {
-              kind: DotKind.IMAGE,
-              value: pixels,
-            };
+            return newValImage(pixels);
           }
-
-          return null;
         }
-        if (inputA != null) {
-          return inputA;
-        }
-        if (inputB != null) {
-          return inputB;
-        }
-        return null;
       },
     },
   ],
@@ -438,6 +369,73 @@ add({
         }
 
         return { kind: DotKind.NUMBER, value: asNumber(input, 0) };
+      },
+    },
+  ],
+  preview: universalPreview(0),
+});
+
+add({
+  name: "Threshold",
+  inputs: [
+    { id: 0, kind: DotKind.IMAGE, label: "input" },
+    { id: 0, kind: DotKind.ANY, label: "threshold" },
+  ],
+  outputs: [
+    {
+      id: 0,
+      label: "result",
+      run(ctx) {
+        const unified = unifyValues([
+          ctx.getInput(0) || NUM_ZERO,
+          ctx.getInput(1) || NUM_HALF,
+        ]);
+        if (unified == null) return null;
+        switch (unified.kind) {
+          case DotKind.NUMBER: {
+            const [a, b] = unified.values;
+            return newValNumber(a >= b ? 1 : 0);
+          }
+          case DotKind.VECTOR: {
+            const [a, b] = unified.values;
+            return newValVector([
+              a[0] >= b[0] ? 1 : 0,
+              a[1] >= b[1] ? 1 : 0,
+              a[2] >= b[2] ? 1 : 0,
+            ]);
+          }
+          case DotKind.COLOR: {
+            const [a, b] = unified.values;
+            return newValColor([
+              a[0] >= b[0] ? 1 : 0,
+              a[1] >= b[1] ? 1 : 0,
+              a[2] >= b[2] ? 1 : 0,
+              a[3] >= b[3] ? 1 : 0,
+            ]);
+          }
+          case DotKind.IMAGE: {
+            const pixels = newImage();
+            const [a, b] = unified.values;
+            for (let i = 0; i < MAX_INDEX; i++) {
+              pixels[i] = a[i] >= b[i] ? 1 : 0;
+            }
+            return newValImage(pixels);
+          }
+          case DotKind.ANY: {
+            const pixels = newImage();
+            const [img, color] = splitImgColor(
+              unified.values[0],
+              unified.values[1]
+            );
+            for (let i = 0; i < MAX_INDEX; i += 4) {
+              pixels[i] = img[i] >= color[0] ? 1 : 0;
+              pixels[i + 1] = img[i + 1] >= color[1] ? 1 : 0;
+              pixels[i + 2] = img[i + 2] >= color[2] ? 1 : 0;
+              pixels[i + 3] = img[i + 3] >= color[3] ? 1 : 0;
+            }
+            return newValImage(pixels);
+          }
+        }
       },
     },
   ],
@@ -648,4 +646,32 @@ function vecNorm(vec: Vec3): number {
 
 function lerp(f: number, a: number, b: number): number {
   return (1 - f) * a + f * b;
+}
+
+function vecAdd(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function vecMul(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] * b[0], a[1] * b[1], a[2] * b[2]];
+}
+
+function colAdd(a: Rgba, b: Rgba): Rgba {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]];
+}
+
+function colMul(a: Rgba, b: Rgba): Rgba {
+  return [a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]];
+}
+
+function splitImgColor(
+  a: DotValueColor | DotValueImage,
+  b: DotValueColor | DotValueImage
+): [Float32Array, Rgba] {
+  if (a.kind === DotKind.IMAGE && b.kind === DotKind.COLOR) {
+    return [a.value, b.value];
+  } else if (a.kind === DotKind.COLOR && b.kind === DotKind.IMAGE) {
+    return [b.value, a.value];
+  }
+  throw new Error(`splitImgColor got wrong kinds ${a.kind}, ${b.kind}`);
 }
